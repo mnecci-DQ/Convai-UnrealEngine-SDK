@@ -1,12 +1,13 @@
 // Copyright 2022 Convai Inc. All Rights Reserved.
 
 #pragma once
-//#include "CoreMinimal.h"
+#include "CoreMinimal.h"
 // #undef UpdateResource
 #include "Components/AudioComponent.h"
 #include "ConvaiDefinitions.h"
 #include "Misc/ScopeLock.h"
 #include "Interfaces/VoiceCodec.h"
+#include "ConvaiRecordingUtils.h"
 
 #include "CoreTypes.h"
 #include "Templates/UnrealTemplate.h"
@@ -699,4 +700,25 @@ private:
 	struct OpusDecoder* Decoder;
 	/** Generation value received from the last incoming packet */
 	uint8 DecoderLastGeneration;
+
+	// Recording functionality
+	UFUNCTION(BlueprintCallable, Category = "Convai|Recording")
+	void StartCacheing();
+
+	UFUNCTION(BlueprintCallable, Category = "Convai|Recording")
+	void StopCacheing(const FString& BaseFilePath);
+
+	UFUNCTION(BlueprintCallable, Category = "Convai|Recording")
+	bool SaveRecordingAsAssets(const FString& BaseAssetName, USoundWave*& OutSoundWave, UConvaiFaceAnimationAsset*& OutFaceAnimation);
+
+	UFUNCTION(BlueprintCallable, Category = "Convai|Recording")
+	bool IsCacheing() const { return bIsCacheing; }
+
+private:
+	// Recording state
+	bool bIsCacheing;
+	TArray<uint8> CachedAudioData;
+	FAnimationSequence CachedFaceSequence;
+	int32 CachedSampleRate;
+	int32 CachedNumChannels;
 };

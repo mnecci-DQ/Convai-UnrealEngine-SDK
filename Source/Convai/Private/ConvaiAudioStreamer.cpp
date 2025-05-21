@@ -9,6 +9,8 @@
 #include "VisionInterface.h"
 #include "Math/UnrealMathUtility.h"
 #include "ConvaiUtils.h"
+#include "ConvaiRecordingUtils.h"
+#include "ConvaiFaceAnimationAsset.h"
 
 // THIRD_PARTY_INCLUDES_START
 #include "opus.h"
@@ -241,6 +243,18 @@ void UConvaiAudioStreamer::PlayVoiceData(uint8* VoiceData, uint32 VoiceDataSize,
 	else
 		// Lipsync component process the audio data to generate the lipsync
 		PlayLipSync(VoiceData, VoiceDataSize, SampleRate, NumChannels);
+
+	// Record the audio data if recording is active
+	if (bIsCacheing)
+	{
+		if (CachedAudioData.Num() == 0)
+		{
+			// First chunk - store sample rate and channels
+			CachedSampleRate = SampleRate;
+			CachedNumChannels = NumChannels;
+		}
+		CachedAudioData.Append(TArray<uint8>(VoiceData, VoiceDataSize));
+	}
 }
 
 void UConvaiAudioStreamer::ForcePlayVoice(USoundWave* VoiceToPlay)
@@ -590,6 +604,14 @@ void UConvaiAudioStreamer::PlayLipSyncWithPreGeneratedData(FAnimationSequence Fa
 		if (ConvaiLipSyncExtended && ConvaiLipSyncExtended->RequiresPreGeneratedFaceData())
 		{
 			ConvaiLipSyncExtended->ConvaiProcessLipSyncAdvanced(nullptr, 0, 0, 0, FaceSequence);
+			
+			// Record the face data if recording is active
+			if (bIsCacheing)
+			{
+				CachedFaceSequence.AnimationFrames.Append(FaceSequence.AnimationFrames);
+				CachedFaceSequence.Duration += FaceSequence.Duration;
+				CachedFaceSequence.FrameRate = FaceSequence.FrameRate;
+			}
 		}
 	}
 }
@@ -1269,4 +1291,118 @@ void UConvaiAudioStreamer::DestroyOpusDecoder()
 		FMemory::Free(Decoder);
 		Decoder = nullptr;
 	}
+}
+
+void UConvaiAudioStreamer::StartCacheing()
+{
+    if (!bIsCacheing)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("StartCacheing: Starting to cache audio and face data"));
+        bIsCacheing = true;
+        CachedAudioData.Empty();
+        CachedFaceSequence.AnimationFrames.Empty();
+        CachedFaceSequence.Duration = 0.0f;
+        CachedFaceSequence.FrameRate = 0.0f;
+        CachedSampleRate = 0;
+        CachedNumChannels = 0;
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("StartCacheing: Cache initialized"));
+    }
+    else
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("StartCacheing: Already caching, ignoring request"));
+    }
+}
+
+void UConvaiAudioStreamer::StopCacheing(const FString& BaseFilePath)
+{
+    if (bIsCacheing)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("StopCacheing: Stopping cache and saving to: %s"), *BaseFilePath);
+        bIsCacheing = false;
+        
+        // Save the recorded data
+        if (CachedAudioData.Num() > 0 && CachedFaceSequence.AnimationFrames.Num() > 0)
+        {
+            UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("StopCacheing: Saving cached data - Audio size: %d bytes, Face frames: %d"), 
+                CachedAudioData.Num(), CachedFaceSequence.AnimationFrames.Num());
+            
+            UConvaiRecordingUtils::SaveAudioAndFaceData(
+                CachedAudioData,
+                CachedFaceSequence,
+                BaseFilePath,
+                CachedSampleRate,
+                CachedNumChannels
+            );
+        }
+        else
+        {
+            UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("StopCacheing: No data to save - Audio size: %d bytes, Face frames: %d"), 
+                CachedAudioData.Num(), CachedFaceSequence.AnimationFrames.Num());
+        }
+        
+        // Clear the recorded data
+        CachedAudioData.Empty();
+        CachedFaceSequence.AnimationFrames.Empty();
+        CachedFaceSequence.Duration = 0.0f;
+        CachedFaceSequence.FrameRate = 0.0f;
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("StopCacheing: Cache cleared"));
+    }
+    else
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("StopCacheing: Not currently caching, ignoring request"));
+    }
+}
+
+bool UConvaiAudioStreamer::SaveRecordingAsAssets(const FString& BaseAssetName, USoundWave*& OutSoundWave, UConvaiFaceAnimationAsset*& OutFaceAnimation)
+{
+    if (!bIsCacheing)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("SaveRecordingAsAssets: Not currently caching"));
+        return false;
+    }
+
+    if (CachedAudioData.Num() == 0)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("SaveRecordingAsAssets: No audio data cached"));
+        return false;
+    }
+
+    if (CachedFaceSequence.AnimationFrames.Num() == 0)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Warning, TEXT("SaveRecordingAsAssets: No face data cached"));
+        return false;
+    }
+
+    UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("SaveRecordingAsAssets: Saving cached data as assets with base name: %s"), *BaseAssetName);
+    UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("SaveRecordingAsAssets: Audio size: %d bytes, Face frames: %d"), 
+        CachedAudioData.Num(), CachedFaceSequence.AnimationFrames.Num());
+
+    // Save the recorded data as assets
+    bool bSuccess = UConvaiRecordingUtils::SaveAudioAndFaceDataAsAssets(
+        CachedAudioData,
+        CachedFaceSequence,
+        BaseAssetName,
+        CachedSampleRate,
+        CachedNumChannels,
+        OutSoundWave,
+        OutFaceAnimation
+    );
+
+    if (bSuccess)
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("SaveRecordingAsAssets: Successfully saved assets"));
+        // Clear the cached data after successful save
+        CachedAudioData.Empty();
+        CachedFaceSequence.AnimationFrames.Empty();
+        CachedFaceSequence.Duration = 0.0f;
+        CachedFaceSequence.FrameRate = 0.0f;
+        bIsCacheing = false;
+        UE_LOG(ConvaiAudioStreamerLog, Log, TEXT("SaveRecordingAsAssets: Cache cleared"));
+    }
+    else
+    {
+        UE_LOG(ConvaiAudioStreamerLog, Error, TEXT("SaveRecordingAsAssets: Failed to save assets"));
+    }
+
+    return bSuccess;
 }

@@ -260,7 +260,7 @@ struct FConvaiBlendshapeParameters
 		float ClampMaxValue = 1;
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FAnimationFrame
 {
 	GENERATED_BODY()
@@ -292,7 +292,7 @@ struct FAnimationFrame
 	}
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FAnimationSequence
 {
 	GENERATED_BODY()
